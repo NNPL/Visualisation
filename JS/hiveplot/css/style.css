@@ -1,0 +1,39 @@
+body {
+  /*color: black;*/
+  margin-top: 25px;
+  margin-left: 25px;
+  margin-right: auto;
+  background: white;
+  font-family: 'Lato', sans-serif;
+  font-size: 14px;
+  font-weight: 300;
+  position: relative;
+}
+.node{
+  fill: gray;
+  }
+
+.link {
+  fill: none;
+  stroke: gray;
+  stroke-width: 1.5px;
+
+}
+.link.active {
+  fill: none;
+  stroke: red;
+  stroke-width: 2px;
+  stroke-opacity: 0.8;
+}
+
+.node.active{
+  stroke: red;
+  stroke-width: 1.5px;
+}
+
+.axis{
+  stroke: black;
+  stroke-width: 0.5px; }
+
+  }
+</style>

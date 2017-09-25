@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang='en'>
+
+<head>
+	<meta charset='utf-8'>
+	<title>D3:</title>
+	<script type='text/javascript' src='./d3v3/d3.min.js'></script>
+	<link rel='stylesheet' type='text/css' href='./css/style.css'>
+</head>
+
+<body>
+	<script type='text/javascript'>
+		// Width and height
+		var width = 700,
+			height = 600,
+			innerRadius = 30,
+			outerRadius = 300;
+		var maxAngle = Math.PI / 3 + Math.PI;
+
+		var angle = d3.scale.ordinal()
+													.domain(['LG1', 'LG2', 'chr1'])
+													.rangePoints([0, maxAngle]);
+
+		var radius = d3.scale.linear()
+													.range([innerRadius, outerRadius]);
+		var	color = d3.scale.category10()
+		                    	.domain(d3.range(20));
+
+		var svgLegend = d3.select('body')
+											.append('div')
+												.attr('id', 'legend')
+												.attr('style', 'float:left')
+												.attr('height', height)
+												.attr('width', '300')
+											.append('svg')
+												.attr('width', 300)
+												.attr('height', height);
+
+		var svg = d3.select('body')
+									.attr('id', 'visualization')
+									.attr('height', height)
+									.attr('margin-left', '350px')
+								.append('svg')
+									.attr('width', width)
+									.attr('height', height)
+								.append('g')
+									.attr('transform', 'translate(' +
+									outerRadius * 1 + ',' + outerRadius * 1 + ')');
+
+// ----------------------------------------------------------------- //
+		d3.csv('./data/nodes.csv', function (nodesCSV) {
+			var nodesDegree = {};
+			var nodes = nodesCSV.map(function (d, i) {
+				//each d is one line of the csv file represented as a json object
+				d.start = +d.start;
+				d.end = +d.end;
+				nodesDegree[d.gene] = (nodesDegree[d.gene] || 0) + 1;
+
+				return d;
+			});
+
+			nodes.forEach(function (n) {
+				n.degree = nodesDegree[n.gene];
+			});
+
+			var nodesByType = d3.nest()
+				.key(function (d) { return d.chrom; })
+				.sortKeys(d3.ascending)
+				.entries(nodes);
+
+			nodesByType.forEach(function (type) {
+				var size = 0;
+				var lastchrom = type.values[0].chrom, count = 0;
+				type.values.forEach(function (d, i) {
+					if (d.chrom !== lastchrom) { lastchrom = d.chrom; count += 2; }
+					d.index = count++;
+					if (d.start > size) { size = d.start; }
+				});
+				type.count = count - 1;
+				type.size = size;
+			});
+
+			var edges = [];
+			for (var i = 0; i < nodes.length; i++) {
+				if (nodes[i].degree > 1) {
+					for (var ii = i + 1; ii < nodes.length; ii++) {
+						if (nodes[i].gene === nodes[ii].gene) {
+							edges.push({
+								source: {
+									type: nodes[i].chrom,
+									plotIndex: nodes[i].start,
+									node: nodes[i]
+								},
+								target: {
+									type: nodes[ii].chrom,
+									plotIndex: nodes[ii].start,
+									node: nodes[ii]
+								}
+							}); // closing push
+						} // closing second if state
+					} // closing second for loop
+				} // closing first if state
+			} // closing first for loop
+
+			// get min and max pos of all genes
+			radius.domain(d3.extent(nodes, function (d) { return d.start; }));
+
+			var arcOffset = 30; // in degrees
+
+			svg.selectAll('.axis')
+			.data(nodesByType)
+			.enter().append('line')
+			.attr('class', 'axis')
+			.attr('transform', function (d) { return 'rotate(' + (degrees(angle(d.key)) + arcOffset) + ')'; })
+			.attr('x1', innerRadius)
+			.attr('x2', function (d) { return radius(d.size); });
+
+			svg.append('g')
+			.attr('class', 'links')
+			.selectAll('.link')
+			.data(edges)
+			.enter().append('path')
+				.attr('class', 'link')
+				.attr('stroke', function (d) { return d; })
+				.attr('d', link()
+					.angle(function (d) { return angle(d.type); })
+					.radius(function (d) { return radius(d.plotIndex); }))
+				.on('mouseover', linkMouseover)
+				.on('mouseout', mouseout);
+
+			svg.append('g')
+			.attr('class', 'nodes')
+			.selectAll('.circle')
+			.data(nodes)
+			.enter().append('circle')
+				.attr('class', 'node')
+				.attr('transform', function (d) { return 'rotate(' + degrees(angle(d.chrom)) + arcOffset + ')'; })
+				.attr('cx', function (d) { return radius(d.start); })
+				.attr('r', 4)
+				.on('mouseover', nodeMouseover)
+				.on('mouseout', mouseout);
+
+			svg.selectAll('.axislabel')
+					.data(nodesByType)
+					.enter().append('text')
+					.attr('class', 'axislabel')
+						.attr('id', 'hivposlabel')
+					.text(function (d) { return d.key; })
+						.attr('text-anchor', 'middle')
+						.attr('style', 'fill: black; font-size:12')
+						.attr('transform', function (d, i) { return rotations(d, i, arcOffset); });
+
+			function nodeMouseover (d) {
+				var neiNodeList = [];
+				// highlight node
+				svg.selectAll('.node').classed('active', function (p) {
+					return p.gene === d.gene;
+				});
+				svg.selectAll('.link').classed('active', function (p) {
+					if (p.source.node === d) {
+						neiNodeList.push(p.target);
+					}
+					if (p.target.node === d) {
+						neiNodeList.push(p.source);
+					}
+					return p.source.node === d || p.target.node === d;
+				});
+
+				var legendElem = [d.chrom, d.start.toLocaleString(), d.end.toLocaleString(),
+				d.strand, d.degree];
+				legendElem.forEach(function (elem) {
+					d3.select('#NodeElem').text(elem);
+				});
+				nodeLegend(d.gene, legendElem);
+			}
+
+			function linkMouseover (d) {
+			// highlight node
+				svg.selectAll('.node').classed('active', function (p) {
+					return p === d.source.node || p === d.target.node;
+				});
+			// highlight links
+				svg.selectAll('.link').classed('active', function (p) {
+					return p === d;
+				});
+
+				linkLegend(d.source.node, d.target.node);
+			}
+
+			function mouseout () {
+				svg.selectAll('.active').classed('active', false)
+						.transition()
+						.duration(250);
+				svgLegend.selectAll('*').remove();
+			}
+		}); // close csv
+
+		function rotations (d, i, arcOffset) {
+			arcOffset += 30; // has a different start angle
+			var rot;
+			if (i === 0) {
+				rot = 60;
+			} else if (i === 1) {
+				rot = 300;
+			} else {
+				rot = 180;
+			}
+			return 'rotate(' + (degrees(angle(d.key)) - arcOffset) + ')' + // rotate of axis angles
+			'translate(0,' + radius(d.size + (d.size / 5)) + ')' +
+        'rotate(' + (rot) + ')'; // rotation of label themselves
+		}
+
+		function degrees (radians) {
+			return radians / Math.PI * 180; // add 30 degrees
+		}
+		function link () {
+			var source = function (d) { return d.source; },
+				target = function (d) { return d.target; },
+				angle = function (d) { return d.angle; },
+				startRadius = function (d) { return d.radius; },
+				endRadius = startRadius,
+				arcOffset = Math.PI / 6; // add 30 degrees
+
+			function link (d, i) {
+				var s = node(source, this, d, i),
+					t = node(target, this, d, i),
+					x;
+				if (t.a < s.a) x = t, t = s, s = x;
+				if (t.a - s.a > Math.PI) s.a += 2 * Math.PI;
+				var a1 = s.a + (t.a - s.a) / 3,
+					a2 = t.a - (t.a - s.a) / 3;
+				return s.r0 - s.r1 || t.r0 - t.r1
+						? 'M' + Math.cos(s.a) * s.r0 + ',' + Math.sin(s.a) * s.r0
+						+ 'L' + Math.cos(s.a) * s.r1 + ',' + Math.sin(s.a) * s.r1
+						+ 'C' + Math.cos(a1) * s.r1 + ',' + Math.sin(a1) * s.r1
+						+ ' ' + Math.cos(a2) * t.r1 + ',' + Math.sin(a2) * t.r1
+						+ ' ' + Math.cos(t.a) * t.r1 + ',' + Math.sin(t.a) * t.r1
+						+ 'L' + Math.cos(t.a) * t.r0 + ',' + Math.sin(t.a) * t.r0
+						+ 'C' + Math.cos(a2) * t.r0 + ',' + Math.sin(a2) * t.r0
+						+ ' ' + Math.cos(a1) * s.r0 + ',' + Math.sin(a1) * s.r0
+						+ ' ' + Math.cos(s.a) * s.r0 + ',' + Math.sin(s.a) * s.r0
+						: 'M' + Math.cos(s.a) * s.r0 + ',' + Math.sin(s.a) * s.r0
+						+ 'C' + Math.cos(a1) * s.r1 + ',' + Math.sin(a1) * s.r1
+						+ ' ' + Math.cos(a2) * t.r1 + ',' + Math.sin(a2) * t.r1
+						+ ' ' + Math.cos(t.a) * t.r1 + ',' + Math.sin(t.a) * t.r1;
+			}
+
+			function node (method, thiz, d, i) {
+				var node = method.call(thiz, d, i);
+				var a = +(typeof angle === 'function' ? angle.call(thiz, node, i) : angle) + arcOffset;
+				var r0 = +(typeof startRadius === 'function' ? startRadius.call(thiz, node, i) : startRadius);
+				var r1 = (startRadius === endRadius ? r0 : +(typeof endRadius === 'function' ? endRadius.call(thiz, node.chrom, i) : endRadius));
+				return {r0: r0, r1: r1, a: a};
+			}
+
+			link.source = function (_) {
+				if (!arguments.length) return source;
+				source = _;
+				return link;
+			};
+
+			link.target = function (_) {
+				if (!arguments.length) return target;
+				target = _;
+				return link;
+			};
+
+			link.angle = function (_) {
+				if (!arguments.length) return angle;
+				angle = _;
+				return link;
+			};
+
+			link.radius = function (_) {
+				if (!arguments.length) return startRadius;
+				startRadius = endRadius = _;
+				return link;
+			};
+
+			link.startRadius = function (_) {
+				if (!arguments.length) return startRadius;
+				startRadius = _;
+				return link;
+			};
+
+			link.endRadius = function (_) {
+				if (!arguments.length) return endRadius;
+				endRadius = _;
+				return link;
+			};
+			return link;
+		}
+
+		function nodeLegend (node, ElArray) {
+			var lw = 200;
+			var lh = 150;
+
+			svgLegend.append('rect')
+				.attr('class', 'legendCont')
+				.attr('x', (350 - lw) / 2)
+				.attr('y', 150)
+				.attr('width', lw)
+				.attr('height', lh)
+				.attr('fill', 'white')
+				.attr('opacity', 0.55)
+				.attr('stroke', 'gray')
+				.attr('stroke-width', '1px')
+				.attr('ry', 15);
+
+			var legendContainer = svgLegend.append('g')
+										.attr('transform', 'translate(' + (350 - lw) / 2 + ',150)');
+			var legendContainerXMargin = 10;
+			var legendContainerYMargin = 20;
+
+			legendContainer.append('text')
+				.attr('class', 'legendCont')
+				.attr('x', lw / 2)
+				.attr('y', legendContainerYMargin + 5)
+				.text(node)
+				.attr('text-anchor', 'middle')
+				.attr('style', 'fill: black; font-size:14');
+
+			legendContainer.selectAll('mainEntryText')
+				.data(['Source', 'Start pos', 'End pos', 'Strand', 'Count'])
+				.enter().append('text')
+					.attr('class', 'legendCont')
+					.attr('x', legendContainerXMargin + 60)
+					.attr('y', legendContainerYMargin + 30)
+					.text(function (d) { return d; })
+					.attr('text-anchor', 'end')
+					.attr('dx', legendContainerXMargin + 10)
+					.attr('dy', function (d, i) { return i * 17; })
+					.attr('style', 'fill: black; font-size:12');
+
+			legendContainer.selectAll('#mainEntryText')
+				.data(ElArray)
+				.enter().append('text')
+					.attr('class', 'legendCont')
+					.attr('id', '#mainEntryText')
+					.text(function (d) { return d; })
+					.attr('x', legendContainerXMargin)
+					.attr('y', legendContainerYMargin + 30)
+					.attr('text-anchor', 'start')
+					.attr('dy', function (d, i) { return i * 17; })
+					.attr('dx', '100')
+					.attr('style', 'fill: blue; font-size:12');
+		}
+
+		function linkLegend (source, target) {
+			var lw = 200;
+			var lh = 150;
+
+			var sourceElem = [source.chrom, source.start.toLocaleString(),
+				 source.end.toLocaleString(), source.strand];
+			sourceElem.forEach(function (elem) {
+				d3.select('#LinkElem').text(elem);
+			});
+			var targetElem = [target.chrom, target.start.toLocaleString(),
+				 target.end.toLocaleString(), target.strand];
+			targetElem.forEach(function (elem) {
+				d3.select('#LinkElem').text(elem);
+			});
+
+			svgLegend.append('rect')
+				.attr('class', 'legendCont')
+				.attr('x', (350 - lw) / 2)
+				.attr('y', 150)
+				.attr('width', lw)
+				.attr('height', lh)
+				.attr('fill', 'white')
+				.attr('opacity', 0.55)
+				.attr('stroke', 'gray')
+				.attr('stroke-width', '1px')
+				.attr('ry', 15);
+
+			var legendContainer = svgLegend.append('g')
+										.attr('transform', 'translate(' + (350 - lw) / 2 + ',150)');
+			var legendContainerXMargin = 10;
+			var legendContainerYMargin = 20;
+
+			legendContainer.append('text')
+				.attr('class', 'legendCont')
+				.attr('x', lw / 2)
+				.attr('y', legendContainerYMargin + 5)
+				.text(source.gene)
+				.attr('text-anchor', 'middle')
+				.attr('style', 'fill: black; font-size:14');
+
+			legendContainer.selectAll('mainEntryText')
+				.data(['Source', 'Start pos', 'End pos', 'Strand'])
+				.enter().append('text')
+					.attr('class', 'legendCont')
+					.attr('x', lw / 2)
+					.attr('y', legendContainerYMargin + 30)
+					.text(function (d) { return d; })
+					.attr('text-anchor', 'middle')
+					.attr('dy', function (d, i) { return i * 20; })
+					.attr('style', 'fill: black; font-size:12');
+
+			legendContainer.selectAll('#mainEntryText')
+				.data(targetElem)
+				.enter().append('text')
+					.attr('class', 'legendCont')
+					.attr('id', '#mainEntryText')
+					.text(function (d) { return d; })
+					.attr('x', lw * 0.75)
+					.attr('y', legendContainerYMargin + 30)
+					.attr('text-anchor', 'start')
+					.attr('dy', function (d, i) { return i * 20; })
+					.attr('style', 'fill: blue; font-size:12');
+
+			legendContainer.selectAll('#mainEntryText')
+				.data(sourceElem)
+				.enter().append('text')
+					.attr('class', 'legendCont')
+					.attr('id', '#mainEntryText')
+					.text(function (d) { return d; })
+					.attr('x', lw * 0.25)
+					.attr('y', legendContainerYMargin + 30)
+					.attr('text-anchor', 'end')
+					.attr('dy', function (d, i) { return i * 20; })
+					.attr('style', 'fill: blue; font-size:12');
+		}
+
+	</script>
+</body>
+
+</html>
